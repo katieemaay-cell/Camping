@@ -591,7 +591,39 @@ body.edit-mode .cb { display: none; }
 .reset-btn:hover { background: var(--moss); color: var(--paper); }
 .reset-btn:focus-visible { outline: 2px solid var(--moss); outline-offset: 2px; }
 
-/* ── AUTO-FILL ───────────────────────────────────────────── */
+
+  /* ── CAMPSITE DROPDOWN ───────────────────────────────── */
+  .campsite-input-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  #campsiteSelect {
+    width: 100%;
+    background: var(--white);
+    border: 1.5px solid var(--mist);
+    border-radius: 4px;
+    padding: 0.6rem 0.8rem;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.85rem;
+    color: var(--ink);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.8rem center;
+    padding-right: 2rem;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  #campsiteSelect:focus {
+    outline: none;
+    border-color: var(--fern);
+    box-shadow: 0 0 0 3px rgba(90,122,70,0.12);
+  }
+  #campsiteSelect.autofilled { border-color: var(--sage); background-color: #f4faf0; }
+  #campsiteSelect option { font-family: Arial, sans-serif; }
+
+  /* ── AUTO-FILL ───────────────────────────────────────────── */
 .autofill-row {
   display: flex; gap: 0.5rem; align-items: stretch;
 }
@@ -766,9 +798,16 @@ body.edit-mode .cb { display: none; }
         <div class="autofill-result-inner" id="autofillResultInner"></div>
       </div>
 
-      <div class="field">
-        <label for="campsiteName">Campsite / area name</label>
-        <input type="text" id="campsiteName" placeholder="e.g. Booloumba Creek Area 3, Site 19" autocomplete="off">
+      <div class="field" id="campsiteField">
+        <label for="campsiteSelect">Campsite / area name</label>
+        <div class="campsite-input-wrap">
+          <select id="campsiteSelect" aria-label="Select a campsite">
+            <option value="">— Select a campsite (or type below) —</option>
+          </select>
+          <input type="text" id="campsiteName" placeholder="Or type campsite name manually" autocomplete="off"
+            aria-label="Campsite name — type manually if not in list">
+        </div>
+        <p class="field-hint" id="campsiteHint">Auto-fill will suggest campsites for your park. You can also type one manually.</p>
       </div>
 
       <!-- Auto-fillable fields — populated by AI, editable by user -->
@@ -1127,7 +1166,12 @@ function readConfig() {
     numKids:       parseInt(get('numKids')) || 0,
     kidsAges:      get('kidsAges'),
     parkName:      get('parkName') || 'National Park',
-    campsiteName:  get('campsiteName') || 'Campsite',
+    campsiteName: (() => {
+      const sel = document.getElementById('campsiteSelect');
+      const txt = get('campsiteName');
+      if (sel && sel.value && sel.value !== '__other__') return sel.value;
+      return txt || 'Campsite';
+    })(),
     nearestTown:   get('nearestTown') || '',
     parksUrl:      get('parksUrl') || 'https://parks.qld.gov.au',
     bomTown:       get('bomTown') || 'brisbane',
@@ -1746,11 +1790,43 @@ function buildApp() {
   const saveBarName = document.getElementById('saveBarName');
   if (saveBarName) saveBarName.textContent = CONFIG.tripName || 'My Trip';
 
+  // ── Auto-save on build ────────────────────────────────────────────
+  // Generate a friendly name: "Trip Name — D Mon" e.g. "Booloumba Creek — 3 Jul"
+  const autoSaveName = (() => {
+    const base = CONFIG.tripName || CONFIG.parkName || 'My Trip';
+    if (CONFIG.dateFrom) {
+      const d = new Date(CONFIG.dateFrom);
+      const dateStr = d.toLocaleDateString('en-AU', {day:'numeric', month:'short'});
+      return `${base} — ${dateStr}`;
+    }
+    return base;
+  })();
+
+  // Set the trip name for saving
+  if (!activeTripId) activeTripId = generateTripId();
+  const trips = loadAllTrips();
+  trips[activeTripId] = {
+    id: activeTripId,
+    name: autoSaveName,
+    parkName: CONFIG.parkName || '',
+    dateFrom: CONFIG.dateFrom || '',
+    savedAt: new Date().toISOString(),
+    data: snapshotWizard(),
+    checked: JSON.parse(JSON.stringify(checked)),
+    sections: JSON.parse(JSON.stringify(SECTIONS)),
+  };
+  saveAllTrips(trips);
+  localStorage.setItem(CURRENT_KEY, activeTripId);
+
+  if (saveBarName) saveBarName.textContent = autoSaveName;
+  renderTripsBar();
+  showSaveStatus('✅ Auto-saved');
+
   // Switch screens
   document.getElementById('wizardScreen').style.display = 'none';
   document.getElementById('appScreen').style.display = 'block';
   window.scrollTo({top: 0, behavior: 'smooth'});
-  announce('Your packing list is ready. Use the tabs to navigate.');
+  announce('Your packing list is ready and saved. Use the tabs to navigate.');
 }
 
 function buildPanelHTML(key) {
@@ -2149,10 +2225,17 @@ Keep the whole response under 120 words. Be direct and practical.`,
     if (sub) sub.textContent = 'Live check complete — see result below';
   } catch (err) {
     const isAuth = err.message === 'AUTH' || err.message.includes('401');
-    if (inner) inner.textContent = isAuth
-      ? '⚠️ AI Check only works inside Claude.ai.\n\nUse the direct links below to check fire danger and park alerts manually.'
-      : `⚠️ Could not fetch: ${err.message}\n\nUse the direct links below.`;
-    if (ts) ts.textContent = 'Use static links as fallback';
+    const isCors = err.message.includes('Failed to fetch') || err.message.includes('NetworkError') || err.message.includes('CORS');
+    let errMsg;
+    if (isAuth) {
+      errMsg = '⚠️ API key not authorised.\n\nCheck your Cloudflare Worker has ANTHROPIC_API_KEY set as a Secret.';
+    } else if (isCors) {
+      errMsg = '⚠️ Connection blocked (CORS error).\n\nYour Cloudflare Worker needs this URL in ALLOWED_ORIGINS:\nhttps://katieemaay-cell.github.io\n\nUpdate worker.js and redeploy.';
+    } else {
+      errMsg = `⚠️ Error: ${err.message}\n\nProxy URL: ${PROXY_URL || 'not set — add your Worker URL'}`;
+    }
+    if (inner) inner.textContent = errMsg;
+    if (ts) ts.textContent = 'Use the static links below as fallback';
     if (btnLbl) btnLbl.textContent = '⚡ Try again';
   }
   btn.disabled = false;
@@ -2336,17 +2419,25 @@ The JSON must have exactly these keys:
   "bomTown": "The BOM forecast town slug — the part after /qld/forecasts/ or /nsw/forecasts/ etc. Use lowercase with hyphens e.g. sunshine-coast",
   "fireDangerRegion": "The specific AFAC/state fire agency fire danger district name covering this park e.g. 'Wide Bay and Burnett'",
   "state": "Two-letter state abbreviation e.g. QLD NSW VIC SA WA TAS NT ACT",
+  "campsites": [
+    "Campsite or camping area name — include area number or site name where known e.g. 'Booloumba Creek Area 1', 'Green Mountains Campground'"
+  ],
   "walks": [
     {
       "name": "Walk name including difficulty/distance if known e.g. 'Booloumba Falls (3km return, Grade 3)'",
-      "alltrailsUrl": "Full AllTrails URL if found e.g. https://www.alltrails.com/trail/australia/... — leave empty string if not found",
-      "notes": "One short sentence: key feature or tip e.g. 'Leads to a waterfall and swimming hole'"
+      "alltrailsUrl": "Full AllTrails URL — MUST start with https://www.alltrails.com/trail/ — leave as empty string if not found on AllTrails",
+      "notes": "One short sentence about the walk e.g. 'Leads to a waterfall and swimming hole'"
     }
   ]
 }
 
-For walks: search AllTrails and the official park website. Find up to 8 actual walking tracks in this specific park. Include a mix of easy and moderate walks. Only include walks that genuinely exist in this park — do not guess or invent. If fewer than 8 real walks exist, return what you find.
-If you cannot find reliable information for any field, use an empty string "". The walks array can be empty [] if no walks are found.`,
+IMPORTANT for walks:
+- Search AllTrails specifically for trails in this park
+- Only include the "alltrailsUrl" field if you found the actual AllTrails page — use exact URLs like https://www.alltrails.com/trail/australia/queensland/booloumba-falls
+- If no AllTrails URL found, set "alltrailsUrl" to empty string ""
+- Include up to 8 real walks — do not invent walks that don't exist
+- The walks array can be empty [] if genuinely no walks found
+If you cannot find reliable information for any field, use an empty string "".`,
         messages: [{
           role: 'user',
           content: `Look up full details for: ${parkName}, Australia.
@@ -2354,7 +2445,8 @@ If you cannot find reliable information for any field, use an empty string "". T
 2. Nearest town with a servo and shops
 3. BOM weather forecast town slug for this area
 4. Fire danger district/region name
-5. Up to 8 actual walking tracks in this park with their AllTrails links if available
+5. Up to 8 named camping areas or campsites within this park (names only, e.g. "Booloumba Creek Area 1", "Green Mountains Campground")
+6. Up to 8 actual walking tracks in this park with their AllTrails links if available
 
 Search AllTrails specifically for "${parkName} walks" to find accurate trail URLs.`
         }]
@@ -2400,44 +2492,92 @@ Search AllTrails specifically for "${parkName} walks" to find accurate trail URL
     const header = document.getElementById('autofillFieldsHeader');
     if (header) header.hidden = false;
 
+    // Sync campsite dropdown → text field
+    const sel = document.getElementById('campsiteSelect');
+    if (sel) {
+      sel.addEventListener('change', () => {
+        const tf = document.getElementById('campsiteName');
+        if (sel.value && tf) {
+          tf.value = sel.value;
+          tf.classList.add('autofilled');
+        }
+      });
+    }
+
+    // ── Populate campsite dropdown ───────────────────────────────────
+    const campsites = Array.isArray(info.campsites) ? info.campsites.filter(s => s && s.trim()) : [];
+    const campsiteSelect = document.getElementById('campsiteSelect');
+    if (campsiteSelect && campsites.length > 0) {
+      // Clear existing options except the placeholder
+      campsiteSelect.innerHTML = '<option value="">— Select a campsite —</option>';
+      campsites.forEach(site => {
+        const opt = document.createElement('option');
+        opt.value = site.trim();
+        opt.textContent = site.trim();
+        campsiteSelect.appendChild(opt);
+      });
+      // Add "other" option
+      const other = document.createElement('option');
+      other.value = '__other__';
+      other.textContent = 'Other / type manually below';
+      campsiteSelect.appendChild(other);
+      campsiteSelect.classList.add('autofilled');
+      // Update hint
+      const hint = document.getElementById('campsiteHint');
+      if (hint) hint.textContent = `${campsites.length} campsite${campsites.length !== 1 ? 's' : ''} found — select one or type manually below.`;
+    }
+
     // ── Fill walk suggestions into Step 6 ────────────────────────────
-    const walks = Array.isArray(info.walks) ? info.walks.filter(w => w.name) : [];
+    // Normalise walks — AI sometimes uses different field names
+    const rawWalks = Array.isArray(info.walks) ? info.walks : [];
+    const walks = rawWalks
+      .map(w => ({
+        name: w.name || w.walkName || w.trail_name || w.trailName || '',
+        alltrailsUrl: w.alltrailsUrl || w.alltrails_url || w.url || w.link || w.allTrailsUrl || '',
+        notes: w.notes || w.description || w.note || '',
+      }))
+      .filter(w => w.name && w.name.trim());
+
     let walksPopulated = 0;
 
     if (walks.length > 0) {
       const walkList = document.getElementById('walkList');
       if (walkList) {
-        // Clear existing entries
         walkList.innerHTML = '';
         walkCount = 0;
 
-        walks.slice(0, 8).forEach((walk, i) => {
+        walks.slice(0, 8).forEach((walk) => {
           walkCount++;
           const entry = document.createElement('div');
           entry.className = 'walk-entry walk-entry--suggested';
+          // Sanitise values to prevent XSS and broken HTML
+          const safeName = walk.name.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+          const safeUrl  = walk.alltrailsUrl.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+          const safeNote = walk.notes.replace(/</g, '&lt;');
           entry.innerHTML = `
             <div class="walk-entry-num">${walkCount}</div>
             <div class="walk-entry-fields">
-              <input type="text" class="walk-name autofilled" value="${walk.name.replace(/"/g, '&quot;')}"
-                placeholder="Walk name">
-              <input type="url" class="walk-url ${walk.alltrailsUrl ? 'autofilled' : ''}"
-                value="${walk.alltrailsUrl || ''}"
-                placeholder="AllTrails link (optional)">
-              ${walk.notes ? `<div class="walk-entry-note">${walk.notes}</div>` : ''}
+              <input type="text" class="walk-name autofilled" value="${safeName}" placeholder="Walk name">
+              <input type="url" class="walk-url ${safeUrl ? 'autofilled' : ''}" value="${safeUrl}" placeholder="AllTrails link (optional)">
+              ${safeNote ? `<div class="walk-entry-note">${safeNote}</div>` : ''}
             </div>`;
           walkList.appendChild(entry);
           walksPopulated++;
         });
 
-        // Hide add button if at max, show if under 8
         const addBtn = document.getElementById('addWalkBtn');
         if (addBtn) addBtn.style.display = walkCount >= 8 ? 'none' : 'block';
       }
 
-      // Update Step 6 header to show walks were pre-filled
       const step6Desc = document.querySelector('#wiz-step-6 .wiz-section-desc');
       if (step6Desc) {
-        step6Desc.innerHTML = `✨ <strong>${walksPopulated} walk${walksPopulated !== 1 ? 's' : ''} found</strong> for ${parkName} — pre-filled below. Edit names, remove any that don't suit, or add more.`;
+        step6Desc.innerHTML = `✨ <strong>${walksPopulated} walk${walksPopulated !== 1 ? 's' : ''} found</strong> for ${parkName} — pre-filled in Step 6. Edit, remove or add more.`;
+      }
+    } else {
+      // No walks returned — update Step 6 desc to say so
+      const step6Desc = document.querySelector('#wiz-step-6 .wiz-section-desc');
+      if (step6Desc) {
+        step6Desc.innerHTML = `No walks found automatically for ${parkName} — add them manually below, or search <a href="https://www.alltrails.com/explore?q=${encodeURIComponent(parkName)}" target="_blank" style="color:var(--cold)">AllTrails ↗</a> to find trail links.`;
       }
     }
 
@@ -2555,7 +2695,22 @@ function restoreWizard(snap) {
   };
   set('tripName', snap.tripName); set('dateFrom', snap.dateFrom); set('dateTo', snap.dateTo);
   set('numAdults', snap.numAdults); set('numKids', snap.numKids); set('kidsAges', snap.kidsAges);
-  set('parkName', snap.parkName); set('campsiteName', snap.campsiteName);
+  set('parkName', snap.parkName);
+  // Restore campsite dropdown options
+  const sel = document.getElementById('campsiteSelect');
+  if (sel && snap.campsiteSelectOptions?.length > 0) {
+    sel.innerHTML = '<option value="">— Select a campsite —</option>';
+    snap.campsiteSelectOptions.forEach(site => {
+      const opt = document.createElement('option'); opt.value = site; opt.textContent = site; sel.appendChild(opt);
+    });
+    const other = document.createElement('option'); other.value = '__other__'; other.textContent = 'Other / type manually below'; sel.appendChild(other);
+    if (snap.campsiteName) {
+      const match = [...sel.options].find(o => o.value === snap.campsiteName);
+      if (match) sel.value = snap.campsiteName;
+    }
+  }
+  // Restore text field
+  set('campsiteName', snap.campsiteName);
   set('nearestTown', snap.nearestTown); set('parksUrl', snap.parksUrl);
   set('bomTown', snap.bomTown); set('fireDangerRegion', snap.fireDangerRegion);
   setRadio('power', snap.power); setRadio('access', snap.access);
