@@ -1002,7 +1002,7 @@ body.edit-mode .cb { display: none; }
 // Set this to your Cloudflare Worker URL after deployment
 // e.g. 'https://camping-app-proxy.yourusername.workers.dev'
 // Leave as empty string to use direct Anthropic API (Claude.ai only)
-const PROXY_URL = 'https://camping-app-proxy.katieemaay.workers.dev';
+const PROXY_URL = 'https://camping-app-proxy.katieemaay.workers.dev/';
 
 function getApiUrl() {
   return PROXY_URL ? PROXY_URL : 'https://api.anthropic.com';
@@ -2177,7 +2177,7 @@ async function checkFireBanLive() {
       method: 'POST',
       headers: getApiHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 1000,
         tools: [{type:'web_search_20250305', name:'web_search'}],
         system: `You are a helpful assistant checking fire danger and park alerts for a family camping trip in Queensland, Australia.
@@ -2386,7 +2386,7 @@ async function autofillParkDetails() {
       method: 'POST',
       headers: getApiHeaders(),
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 2000,
         tools: [{ type: 'web_search_20250305', name: 'web_search' }],
         system: `You are a helpful assistant that looks up Australian national park details for a camping trip planner app.
@@ -2603,9 +2603,9 @@ Search AllTrails specifically for "${parkName} walks" to find accurate trail URL
         showAutofillResult('error',
           '⚠️ Proxy URL not set — this is why auto-fill failed.\n\n' +
           'Fix: open index.html in a text editor, find:\n' +
-          "const PROXY_URL = '';\n\n" +
+          "const PROXY_URL = 'https://camping-app-proxy.katieemaay.workers.dev';\n\n" +
           'Replace with your Cloudflare Worker URL:\n' +
-          "const PROXY_URL = 'https://your-worker.workers.dev';\n\n" +
+          "const PROXY_URL = 'https://camping-app-proxy.katieemaay.workers.dev';\n\n" +
           'Then re-upload index.html to GitHub.'
         );
       } else {
