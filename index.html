@@ -711,13 +711,6 @@ body.edit-mode .cb { display: none; }
     </div>
   </div>
 
-  <!-- Saved trips bar -->
-  <div class="trips-bar" id="tripsBar">
-    <span class="trips-bar-label">Trips</span>
-    <div class="trips-scroll" id="tripsScroll" role="list" aria-label="Saved trips"></div>
-    <button class="btn-new-trip" id="btnNewTrip" aria-label="Start a new trip">+ New</button>
-  </div>
-
   <div class="wiz-progress">
     <div class="wiz-steps" id="wizSteps" role="progressbar" aria-label="Setup progress" aria-valuenow="1" aria-valuemax="7">
       <!-- dots injected by JS -->
@@ -966,22 +959,12 @@ body.edit-mode .cb { display: none; }
 ══════════════════════════════════════════════════════════ -->
 <div id="appScreen">
 
-  <!-- Save bar -->
-  <div class="save-bar" id="saveBar">
-    <div class="save-bar-left">
-      <span>💾</span>
-      <span class="save-bar-name" id="saveBarName">Unsaved trip</span>
-      <span class="save-status" id="saveStatus"></span>
-    </div>
-    <div class="save-bar-actions">
-      <button class="btn-trips-list" id="btnTripsList" aria-label="View saved trips">📋 My trips</button>
-      <button class="btn-save-trip" id="btnSaveTrip" aria-label="Save current trip">Save</button>
-    </div>
-  </div>
-
   <header>
     <div class="header-inner">
-      <button class="header-edit-btn" onclick="returnToWizard()" aria-label="Edit trip settings">✏️ Edit trip</button>
+      <div class="header-action-btns">
+        <button class="header-edit-btn" onclick="returnToWizard()" aria-label="Edit trip settings">✏️ Edit trip</button>
+        <button class="header-edit-btn" id="btnMyTrips" onclick="openTripsPage()" aria-label="View saved trips">🏕️ My trips</button>
+      </div>
       <div class="trip-meta" id="appChips"></div>
       <h1 id="appTitle">My Camping Trip</h1>
       <p class="subtitle" id="appSubtitle"></p>
@@ -1787,8 +1770,7 @@ function buildApp() {
   setupEditMode();
 
   // Update save bar name
-  const saveBarName = document.getElementById('saveBarName');
-  if (saveBarName) saveBarName.textContent = CONFIG.tripName || 'My Trip';
+
 
   // ── Auto-save on build ────────────────────────────────────────────
   // Generate a friendly name: "Trip Name — D Mon" e.g. "Booloumba Creek — 3 Jul"
@@ -1818,9 +1800,7 @@ function buildApp() {
   saveAllTrips(trips);
   localStorage.setItem(CURRENT_KEY, activeTripId);
 
-  if (saveBarName) saveBarName.textContent = autoSaveName;
-  renderTripsBar();
-  showSaveStatus('✅ Auto-saved');
+  // Auto-save complete
 
   // Switch screens
   document.getElementById('wizardScreen').style.display = 'none';
@@ -2602,23 +2582,47 @@ Search AllTrails specifically for "${parkName} walks" to find accurate trail URL
 
   } catch (err) {
     const isAuth = err.message === 'AUTH';
+    const isCors = err.message.includes('Failed to fetch') || err.message.includes('NetworkError') || err.message.includes('CORS');
+
     if (isAuth) {
       if (localMatch) {
         showAutofillResult('success',
           '✅ Park details filled from local database.\n' +
-          '⚠️ Walk suggestions need Claude.ai — add walks manually in Step 6,\n' +
-          'or open this page inside Claude.ai for automatic walk suggestions.'
+          '⚠️ Walk suggestions need a Cloudflare Worker or Claude.ai — add walks manually in Step 6.'
         );
       } else {
         showAutofillResult('error',
-          '⚠️ Park not found locally and AI needs Claude.ai.\n\n' +
+          '⚠️ Park not found locally and AI unavailable.\n\n' +
           'Fill in the fields manually:\n' +
           '• parks.qld.gov.au (QLD) · nationalparks.nsw.gov.au (NSW) · parks.vic.gov.au (VIC)\n' +
           '• alltrails.com for walk links'
         );
       }
+    } else if (isCors) {
+      if (!PROXY_URL) {
+        showAutofillResult('error',
+          '⚠️ Proxy URL not set — this is why auto-fill failed.\n\n' +
+          'Fix: open index.html in a text editor, find:\n' +
+          "const PROXY_URL = '';\n\n" +
+          'Replace with your Cloudflare Worker URL:\n' +
+          "const PROXY_URL = 'https://your-worker.workers.dev';\n\n" +
+          'Then re-upload index.html to GitHub.'
+        );
+      } else {
+        showAutofillResult('error',
+          '⚠️ Request blocked by Cloudflare Worker.\n\n' +
+          'Check:\n' +
+          '1. https://katieemaay-cell.github.io is in ALLOWED_ORIGINS in worker.js\n' +
+          '2. ANTHROPIC_API_KEY is set as a Secret (not variable) in Cloudflare\n' +
+          '3. Worker was redeployed after changes (Save and Deploy)'
+        );
+      }
     } else {
-      showAutofillResult('error', `⚠️ Could not fetch details: ${err.message}\n\nFill in the fields manually below.`);
+      showAutofillResult('error',
+        `⚠️ Could not fetch details: ${err.message}\n\n` +
+        `Proxy: ${PROXY_URL ? PROXY_URL : 'not set — add your Worker URL to PROXY_URL in index.html'}\n\n` +
+        'Fill in the fields manually below.'
+      );
     }
     btnLabel.textContent = '✨ Try again';
   }
@@ -2764,9 +2768,6 @@ function saveCurrentTrip() {
   };
   saveAllTrips(trips);
   localStorage.setItem(CURRENT_KEY, activeTripId);
-  renderTripsBar();
-  showSaveStatus('✅ Saved');
-  renderTripsModal();
 }
 
 function loadTrip(id) {
@@ -2781,8 +2782,7 @@ function loadTrip(id) {
     if (trip.checked) Object.assign(checked, trip.checked);
     CONFIG = readConfig();
     buildApp();
-    const nameEl = document.getElementById('saveBarName');
-    if (nameEl) nameEl.textContent = trip.name;
+    closeTripsPage();
   } else {
     returnToWizard();
   }
@@ -2844,56 +2844,93 @@ function startNewTrip() {
   document.getElementById('wizBack').style.display = 'none';
   document.getElementById('wizNext').style.display = 'block';
   document.getElementById('wizBuild').style.display = 'none';
-  renderTripsBar();
   announce('New trip started');
 }
 
 function renderTripsBar() {
-  const trips = loadAllTrips();
-  const scroll = document.getElementById('tripsScroll');
-  if (!scroll) return;
-  const entries = Object.values(trips).sort((a,b) => (b.savedAt||'').localeCompare(a.savedAt||''));
-  if (entries.length === 0) {
-    scroll.innerHTML = '<span style="font-size:0.62rem;color:rgba(245,240,228,0.35);font-style:italic">No saved trips yet</span>';
-    return;
-  }
-  scroll.innerHTML = entries.map(trip => `
-    <div class="trip-chip${trip.id===activeTripId?' active':''}" role="listitem"
-      onclick="loadTrip('${trip.id}')" title="${trip.name}">
-      🏕️ ${trip.name.length>18?trip.name.slice(0,16)+'…':trip.name}
-      <button class="trip-chip-del" onclick="event.stopPropagation();deleteTrip('${trip.id}')"
-        aria-label="Delete ${trip.name}">✕</button>
-    </div>`).join('');
+  // Trips bar removed — trips are accessed via My Trips page in header
 }
 
-function renderTripsModal() {
+function renderTripsPage() {
   const trips = loadAllTrips();
-  const body = document.getElementById('modalBody');
+  const body = document.getElementById('tripsPageBody');
   if (!body) return;
   const entries = Object.values(trips).sort((a,b) => (b.savedAt||'').localeCompare(a.savedAt||''));
+
+  // Save card — shows current trip name and a Save button
+  const currentName = CONFIG && CONFIG.tripName
+    ? (CONFIG.tripName + (CONFIG.dateFrom ? ' — ' + new Date(CONFIG.dateFrom).toLocaleDateString('en-AU',{day:'numeric',month:'short'}) : ''))
+    : (activeTripId && trips[activeTripId] ? trips[activeTripId].name : null);
+
+  const saveCard = `
+    <div class="trips-save-card">
+      <span class="trips-save-icon">💾</span>
+      <div class="trips-save-body">
+        <div class="trips-save-title">Save current trip</div>
+        <div class="trips-save-sub">${currentName
+          ? 'Saving as: <span>' + currentName + '</span>'
+          : 'Build a trip first to save it here'}</div>
+      </div>
+      <button class="btn-save-now" onclick="saveCurrentTrip();renderTripsPage();"
+        ${!currentName ? 'disabled style="opacity:0.4;cursor:default"' : ''}>Save</button>
+    </div>`;
+
   if (entries.length === 0) {
-    body.innerHTML = '<p class="modal-empty">No saved trips yet — build your first trip and tap Save.</p>';
+    body.innerHTML = saveCard + `
+      <div class="trips-empty">
+        <div class="trips-empty-icon">🏕️</div>
+        <div class="trips-empty-text">No saved trips yet.<br>Build your first trip and tap Save above.</div>
+      </div>`;
     return;
   }
-  body.innerHTML = entries.map(trip => {
+
+  const rows = entries.map(trip => {
     const date = trip.dateFrom ? new Date(trip.dateFrom).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) : '';
     const saved = trip.savedAt ? new Date(trip.savedAt).toLocaleDateString('en-AU',{day:'numeric',month:'short'}) : '';
-    return `<div class="saved-trip-row${trip.id===activeTripId?' active-trip':''}" onclick="loadTrip('${trip.id}')">
-      <span class="saved-trip-icon">🏕️</span>
-      <div class="saved-trip-info">
-        <div class="saved-trip-name">${trip.name}${trip.id===activeTripId?' <span style="font-size:0.6rem;color:var(--moss)">● current</span>':''}</div>
-        <div class="saved-trip-meta">${[trip.parkName,date,saved?'Saved '+saved:''].filter(Boolean).join(' · ')}</div>
+    const isActive = trip.id === activeTripId;
+    return `<div class="trip-row${isActive ? ' is-active' : ''}">
+      <span class="trip-row-icon">🏕️</span>
+      <div class="trip-row-body" onclick="loadTrip('${trip.id}')">
+        <div class="trip-row-name">${trip.name}${isActive ? ' <span class="trip-row-active-badge">current</span>' : ''}</div>
+        <div class="trip-row-meta">${[trip.parkName,date,saved?'Saved '+saved:''].filter(Boolean).join(' · ')}</div>
       </div>
-      <div class="saved-trip-actions">
-        <button class="trip-action-btn" onclick="event.stopPropagation();loadTrip('${trip.id}')">Load</button>
-        <button class="trip-action-btn del" onclick="event.stopPropagation();deleteTrip('${trip.id}')">Delete</button>
+      <div class="trip-row-actions">
+        <button class="trip-btn load" onclick="loadTrip('${trip.id}')">Load</button>
+        <button class="trip-btn del" onclick="deleteTripFromPage('${trip.id}')">Delete</button>
       </div>
     </div>`;
   }).join('');
+
+  body.innerHTML = saveCard +
+    `<div class="trips-section-label">${entries.length} saved trip${entries.length !== 1 ? 's' : ''}</div>` +
+    rows;
 }
 
-function openTripsModal() { renderTripsModal(); const m=document.getElementById('tripsModal'); if(m){m.hidden=false;document.getElementById('modalClose')?.focus();} }
-function closeTripsModal() { const m=document.getElementById('tripsModal'); if(m) m.hidden=true; }
+function deleteTripFromPage(id) {
+  const trips = loadAllTrips();
+  const name = trips[id]?.name || 'this trip';
+  if (!confirm(`Delete "${name}"?`)) return;
+  delete trips[id];
+  saveAllTrips(trips);
+  if (activeTripId === id) { activeTripId = null; localStorage.removeItem(CURRENT_KEY); }
+  renderTripsPage();
+  announce(`Trip "${name}" deleted`);
+}
+
+function openTripsModal() { openTripsPage(); }
+function closeTripsModal() { closeTripsPage(); }
+
+function openTripsPage() {
+  renderTripsPage();
+  const page = document.getElementById('tripsPage');
+  if (page) { page.hidden = false; document.getElementById('btnCloseTripsPage')?.focus(); }
+  announce('My trips page open');
+}
+
+function closeTripsPage() {
+  const page = document.getElementById('tripsPage');
+  if (page) page.hidden = true;
+}
 function showSaveStatus(msg) {
   const el=document.getElementById('saveStatus'); if(!el) return;
   el.textContent=msg; el.style.opacity='1';
@@ -2918,27 +2955,14 @@ function announce(msg) {
 document.getElementById('wizBack').style.display  = 'none';
 document.getElementById('wizBuild').style.display = 'none';
 
-// Trips bar
-document.getElementById('btnNewTrip')?.addEventListener('click', startNewTrip);
+// Trips page (app screen header buttons)
+document.getElementById('btnMyTrips')?.addEventListener('click', openTripsPage);
+document.getElementById('btnCloseTripsPage')?.addEventListener('click', closeTripsPage);
+document.getElementById('btnTripsPageNew')?.addEventListener('click', () => { closeTripsPage(); startNewTrip(); });
 
-// Save bar (app screen)
-document.getElementById('btnSaveTrip')?.addEventListener('click', () => {
-  saveCurrentTrip();
-  const nameEl = document.getElementById('saveBarName');
-  if (nameEl && CONFIG.tripName) nameEl.textContent = CONFIG.tripName;
-});
-document.getElementById('btnTripsList')?.addEventListener('click', openTripsModal);
-document.getElementById('modalClose')?.addEventListener('click', closeTripsModal);
-document.getElementById('btnModalNewTrip')?.addEventListener('click', startNewTrip);
-
-// Close modal on overlay click
-document.getElementById('tripsModal')?.addEventListener('click', e => {
-  if (e.target === document.getElementById('tripsModal')) closeTripsModal();
-});
-
-// Close modal on Escape
+// Close trips page on Escape
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && !document.getElementById('tripsModal')?.hidden) closeTripsModal();
+  if (e.key === 'Escape' && !document.getElementById('tripsPage')?.hidden) closeTripsPage();
 });
 
 // Auto-save checked items when user checks/unchecks
@@ -3003,21 +3027,7 @@ window.addEventListener('appinstalled', () => {
   if (b) b.style.display = 'none';
 });
 </script>
-<!-- Trips modal -->
-<div class="modal-overlay" id="tripsModal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-  <div class="modal-sheet">
-    <div class="modal-header">
-      <span class="modal-title" id="modalTitle">🏕️ Saved Trips</span>
-      <button class="modal-close" id="modalClose" aria-label="Close">✕</button>
-    </div>
-    <div class="modal-body" id="modalBody">
-      <p class="modal-empty">No saved trips yet — build your first trip and tap Save.</p>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" style="flex:1;font-size:0.7rem" id="btnModalNewTrip">+ New trip</button>
-    </div>
-  </div>
-</div>
+
 
 
 <div id="installBanner" role="complementary" aria-label="Install app">
@@ -3031,5 +3041,18 @@ window.addEventListener('appinstalled', () => {
     <button class="dismiss-btn" onclick="dismissInstallBanner()" aria-label="Dismiss">✕</button>
   </div>
 </div>
+
+<!-- ── TRIPS PAGE ───────────────────────────────────────────────── -->
+<div id="tripsPage" hidden aria-label="My trips" role="dialog" aria-modal="true">
+  <div class="trips-page-header">
+    <button class="trips-page-back" id="btnCloseTripsPage" aria-label="Close trips page">← Back</button>
+    <span class="trips-page-title">🏕️ My Trips</span>
+    <button class="trips-page-new" id="btnTripsPageNew" aria-label="Start a new trip">+ New</button>
+  </div>
+  <div class="trips-page-body" id="tripsPageBody">
+    <!-- injected by renderTripsPage() -->
+  </div>
+</div>
+
 </body>
 </html>
