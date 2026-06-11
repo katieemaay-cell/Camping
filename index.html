@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="./icons/icon-192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="./icons/icon-512.png">
-<meta name="description" content="Build a personalised camping packing list for any Australian national park">
+<meta name="description" content="Build a personalised  packing list for any Australian national park">
 
 <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -1002,7 +1002,7 @@ body.edit-mode .cb { display: none; }
 // Set this to your Cloudflare Worker URL after deployment
 // e.g. 'https://camping-app-proxy.yourusername.workers.dev'
 // Leave as empty string to use direct Anthropic API (Claude.ai only)
-const PROXY_URL = 'https://camping-app-proxy.katieemaay.workers.dev/';
+const PROXY_URL = 'https://camping-app-proxy.katieemaay.workers.dev';
 
 function getApiUrl() {
   return PROXY_URL ? PROXY_URL : 'https://api.anthropic.com';
